@@ -73,45 +73,55 @@ async function extractIptcData(arrayBuffer) {
 
 // 2. Generate New Metadata
 async function generateMetadata(file, existingData) {
-    const apiKey = localStorage.getItem('OPENROUTER_API_KEY') || 
-                  prompt('Enter your OpenRouter API key (will be saved locally):');
+    // Get or request API key
+    let apiKey = localStorage.getItem('OPENROUTER_API_KEY');
     
-    if (!apiKey) throw new Error('API key required');
-    localStorage.setItem('OPENROUTER_API_KEY', apiKey);
+    if (!apiKey) {
+        apiKey = window.prompt('Enter your OpenRouter API key (will be saved locally):');
+        
+        if (!apiKey) {
+            throw new Error('API key is required to analyze images');
+        }
+        
+        if (apiKey.trim().length < 20) {
+            throw new Error('Please enter a valid API key (at least 20 characters)');
+        }
+        
+        localStorage.setItem('OPENROUTER_API_KEY', apiKey);
+    }
 
     const imageBase64 = await fileToBase64(file);
     
-    const prompt = `Analyze this image and:
-1. Write a concise AP Style caption (15 words max)
-2. Generate 20+ relevant keywords
-3. Consider existing caption: "${existingData.caption}"
-Format: CAPTION: [caption] | KEYWORDS: [comma-separated keywords]`;
+    const prompt = `Analyze this image...`; // Your existing prompt
+    
+    try {
+        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+                'HTTP-Referer': window.location.href,
+                'X-Title': 'IPTC Editor'
+            },
+            body: JSON.stringify({
+                model: "deepseek/deepseek-chat:free",
+                messages: [{
+                    role: "user",
+                    content: [
+                        { type: "image_url", image_url: `data:image/jpeg;base64,${imageBase64}` },
+                        { type: "text", text: prompt }
+                    ]
+                }],
+                temperature: 0.3
+            })
+        });
 
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-            'HTTP-Referer': window.location.href,
-            'X-Title': 'IPTC Editor'
-        },
-        body: JSON.stringify({
-            model: "deepseek/deepseek-chat:free",
-            messages: [{
-                role: "user",
-                content: [
-                    { type: "image_url", image_url: `data:image/jpeg;base64,${imageBase64}` },
-                    { type: "text", text: prompt }
-                ]
-            }],
-            temperature: 0.3
-        })
-    });
-
-    if (!response.ok) throw new Error(`API error: ${response.status}`);
-
-    const data = await response.json();
-    return parseApiResponse(data.choices[0]?.message?.content);
+        if (!response.ok) throw new Error(`API error: ${response.status}`);
+        return parseApiResponse(await response.json());
+    } catch (error) {
+        console.error('API request failed:', error);
+        throw error; // Re-throw for the caller to handle
+    }
 }
 
 function parseApiResponse(content) {
