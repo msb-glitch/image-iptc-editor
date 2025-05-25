@@ -21,244 +21,187 @@ analyzeBtn.addEventListener('click', analyzeImage);
 addKeywordBtn.addEventListener('click', addKeyword);
 saveBtn.addEventListener('click', saveAndDownload);
 
-// Handle image upload
+// 1. Handle Image Upload
 async function handleImageUpload(e) {
-    const file = e.target.files[0];
-    if (!file) return;
+  const file = e.target.files[0];
+  if (!file) return;
 
-    originalFile = file;
-    analyzeBtn.disabled = false;
+  originalFile = file;
+  analyzeBtn.disabled = false;
 
-    // Preview image
-    imagePreview.src = URL.createObjectURL(file);
-    
-    // Read file as ArrayBuffer for metadata
-    originalArrayBuffer = await file.arrayBuffer();
+  // Preview image
+  imagePreview.src = URL.createObjectURL(file);
+  originalArrayBuffer = await file.arrayBuffer();
 }
 
-// Analyze image and extract metadata
+// 2. Analyze Image
 async function analyzeImage() {
-    if (!originalFile) return;
+  if (!originalFile) return;
+  showLoading(true);
 
-    showLoading(true);
-
-    try {
-        // 1. Extract existing IPTC data
-        const iptcData = await extractIptcData(originalArrayBuffer);
-        
-        // 2. Generate new caption and keywords
-        const generatedData = await generateMetadata(originalFile, iptcData);
-        
-        // 3. Display results
-        displayMetadata(iptcData, generatedData);
-        
-        showLoading(false);
-        results.classList.remove('hidden');
-    } catch (error) {
-        console.error('Error:', error);
-        alert(`Error: ${error.message}`);
-        showLoading(false);
-    }
-}
-
-// 1. Extract IPTC Data
-async function extractIptcData(arrayBuffer) {
-    const metadata = await exifr.parse(arrayBuffer, { iptc: true });
+  try {
+    // Extract existing metadata
+    const metadata = await exifr.parse(originalArrayBuffer, { iptc: true });
     
-    return {
-        caption: metadata?.iptc?.Caption || '',
-        keywords: metadata?.iptc?.Keywords || []
-    };
+    // Generate new caption/keywords
+    const generated = await generateMetadata(originalFile, {
+      caption: metadata?.caption || '',
+      keywords: metadata?.keywords || []
+    });
+    
+    // Display results
+    displayMetadata(generated);
+    showLoading(false);
+    results.classList.remove('hidden');
+  } catch (error) {
+    console.error('Error:', error);
+    alert(`Error: ${error.message}`);
+    showLoading(false);
+  }
 }
 
-// 2. Generate New Metadata
-async function generateMetadata(imageBase64, prompt) {
+// 3. Generate Metadata via API
+async function generateMetadata(file, existingData) {
   let apiKey = localStorage.getItem('OPENROUTER_API_KEY');
-  
   if (!apiKey) {
     apiKey = window.prompt('Enter OpenRouter API key:');
     if (!apiKey) throw new Error('API key required');
     localStorage.setItem('OPENROUTER_API_KEY', apiKey);
   }
 
-  const headers = {
-    'Authorization': `Bearer ${apiKey.trim()}`,
-    'Content-Type': 'application/json',
-    'HTTP-Referer': window.location.href,
-    'X-Title': 'Image Captioner'
-  };
-
-  const payload = {
-    model: "deepseek/deepseek-chat:free",
-    messages: [{
-      role: "user",
-      content: [
-        { type: "image_url", image_url: `data:image/jpeg;base64,${imageBase64}` },
-        { type: "text", text: prompt }
-      ]
-    }],
-    temperature: 0.3
-  };
-
+  const imageBase64 = await fileToBase64(file);
+  
   const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
-    headers,
-    body: JSON.stringify(payload)
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': window.location.href,
+      'X-Title': 'Image Captioner'
+    },
+    body: JSON.stringify({
+      model: "deepseek/deepseek-chat:free",
+      messages: [{
+        role: "user",
+        content: [
+          { 
+            type: "image_url", 
+            image_url: `data:image/jpeg;base64,${imageBase64}` 
+          },
+          { 
+            type: "text", 
+            text: `Generate AP-style caption and 20 keywords. Existing caption: "${existingData.caption}"` 
+          }
+        ]
+      }],
+      temperature: 0.3
+    })
   });
 
-  if (response.status === 401) {
-    localStorage.removeItem('OPENROUTER_API_KEY');
-    throw new Error('Invalid API key. Please refresh and enter a new key.');
-  }
-
   if (!response.ok) {
-    throw new Error(`API error ${response.status}: ${await response.text()}`);
+    if (response.status === 401) {
+      localStorage.removeItem('OPENROUTER_API_KEY');
+      throw new Error('Invalid API key. Please refresh and try again.');
+    }
+    throw new Error(`API error: ${response.status}`);
   }
 
-  return response.json();
+  const data = await response.json();
+  return parseApiResponse(data.choices[0]?.message?.content);
 }
 
-function parseApiResponse(content) {
-    const captionMatch = content.match(/CAPTION:\s*(.+?)\s*(\||$)/i);
-    const keywordsMatch = content.match(/KEYWORDS:\s*(.+?)\s*$/i);
-    
-    return {
-        caption: captionMatch?.[1]?.trim() || 'No caption generated',
-        keywords: keywordsMatch?.[1]?.split(',').map(k => k.trim()).filter(k => k) || []
-    };
-}
-
-// 3. Display Metadata
-function displayMetadata(existingData, generatedData) {
-    // Combine existing and generated captions
-    captionInput.value = generatedData.caption || existingData.caption;
-    
-    // Combine and deduplicate keywords
-    currentKeywords = [...new Set([
-        ...existingData.keywords,
-        ...generatedData.keywords
-    ])].slice(0, 25); // Limit to 25 keywords
-    
-    renderKeywords();
-}
-
-function renderKeywords() {
-    keywordsContainer.innerHTML = '';
-    currentKeywords.forEach((keyword, index) => {
-        const tag = document.createElement('div');
-        tag.className = 'keyword-tag';
-        tag.innerHTML = `
-            ${keyword}
-            <span class="delete-keyword" data-index="${index}">×</span>
-        `;
-        keywordsContainer.appendChild(tag);
-    });
-
-    // Add delete handlers
-    document.querySelectorAll('.delete-keyword').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            currentKeywords.splice(parseInt(e.target.dataset.index), 1);
-            renderKeywords();
-        });
-    });
-}
-
-function addKeyword() {
-    const keyword = newKeyword.value.trim();
-    if (keyword && !currentKeywords.includes(keyword)) {
-        currentKeywords.push(keyword);
-        renderKeywords();
-        newKeyword.value = '';
-    }
-}
-
-// 4. Save New Metadata and Download
+// 4. Save with IPTC Metadata
 async function saveAndDownload() {
-    if (!originalArrayBuffer) return;
+  showLoading(true);
+  
+  try {
+    const base64 = await fileToBase64(originalFile);
+    const exifObj = piexif.load(base64);
+    
+    // Update IPTC metadata
+    exifObj['0th'][piexif.ImageIFD.XPSubject] = stringToBytes(captionInput.value);
+    exifObj['iptc'] = exifObj['iptc'] || {};
+    exifObj['iptc'][piexif.IptcIFD.Caption] = captionInput.value;
+    
+    // Add keywords (max 64 chars each)
+    currentKeywords.slice(0, 20).forEach((kw, i) => {
+      exifObj['iptc'][piexif.IptcIFD.Keywords + i] = kw.substring(0, 64);
+    });
 
-    showLoading(true);
-
-    try {
-        // Convert ArrayBuffer to base64
-        const base64 = arrayBufferToBase64(originalArrayBuffer);
-        
-        // Load existing EXIF data
-        const exifObj = piexif.load(base64);
-        
-        // Update IPTC data
-        if (!exifObj['0th']) exifObj['0th'] = {};
-        if (!exifObj['iptc']) exifObj['iptc'] = {};
-        
-        // Set caption (XPSubject in EXIF, Caption in IPTC)
-        exifObj['0th'][piexif.ImageIFD.XPSubject] = stringToBytes(captionInput.value);
-        exifObj['iptc'][piexif.IptcIFD.Caption] = captionInput.value;
-        
-        // Set keywords (split into multiple IPTC tags if needed)
-        const maxKeywordsPerTag = 16;
-        for (let i = 0; i < currentKeywords.length; i += maxKeywordsPerTag) {
-            const chunk = currentKeywords.slice(i, i + maxKeywordsPerTag);
-            exifObj['iptc'][piexif.IptcIFD.Keywords + i/maxKeywordsPerTag] = chunk.join(',');
-        }
-        
-        // Insert updated metadata
-        const exifBytes = piexif.dump(exifObj);
-        const newImageData = piexif.insert(exifBytes, base64);
-        
-        // Create download
-        const byteString = atob(newImageData);
-        const byteArray = new Uint8Array(byteString.length);
-        for (let i = 0; i < byteString.length; i++) {
-            byteArray[i] = byteString.charCodeAt(i);
-        }
-        
-        const blob = new Blob([byteArray], { type: 'image/jpeg' });
-        const url = URL.createObjectURL(blob);
-        
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `iptc_edited_${originalFile.name}`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        
-    } catch (error) {
-        console.error('Error saving metadata:', error);
-        alert(`Error saving: ${error.message}`);
-    } finally {
-        showLoading(false);
-    }
+    const exifBytes = piexif.dump(exifObj);
+    const newImage = piexif.insert(exifBytes, base64);
+    
+    downloadFile(newImage, `captioned_${originalFile.name}`);
+  } catch (error) {
+    alert(`Error saving: ${error.message}`);
+  } finally {
+    showLoading(false);
+  }
 }
 
 // Helper Functions
 function showLoading(show) {
-    loading.classList.toggle('hidden', !show);
-    analyzeBtn.disabled = show;
-    saveBtn.disabled = show;
+  loading.classList.toggle('hidden', !show);
+  [analyzeBtn, saveBtn].forEach(btn => btn.disabled = show);
 }
 
 async function fileToBase64(file) {
-    return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onload = (e) => resolve(e.target.result.split(',')[1]);
-        reader.readAsDataURL(file);
-    });
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target.result.split(',')[1]);
+    reader.readAsDataURL(file);
+  });
 }
 
-function arrayBufferToBase64(buffer) {
-    let binary = '';
-    const bytes = new Uint8Array(buffer);
-    for (let i = 0; i < bytes.byteLength; i++) {
-        binary += String.fromCharCode(bytes[i]);
-    }
-    return btoa(binary);
+function downloadFile(base64, filename) {
+  const link = document.createElement('a');
+  link.href = `data:image/jpeg;base64,${base64}`;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
 }
 
 function stringToBytes(str) {
-    const bytes = [];
-    for (let i = 0; i < str.length; i++) {
-        bytes.push(str.charCodeAt(i));
-        bytes.push(0); // UTF-16 null byte
-    }
-    return bytes;
+  const bytes = [];
+  for (let i = 0; i < str.length; i++) {
+    bytes.push(str.charCodeAt(i));
+    bytes.push(0); // UTF-16
+  }
+  return bytes;
+}
+
+function parseApiResponse(content) {
+  const caption = content.match(/CAPTION:\s*(.+?)(?:\s*\||$)/i)?.[1]?.trim() || 'No caption';
+  const keywords = content.match(/KEYWORDS:\s*(.+)/i)?.[1]?.split(/\s*,\s*/) || [];
+  return { caption, keywords };
+}
+
+function displayMetadata(data) {
+  captionInput.value = data.caption;
+  currentKeywords = [...new Set(data.keywords)].slice(0, 20);
+  renderKeywords();
+}
+
+function renderKeywords() {
+  keywordsContainer.innerHTML = '';
+  currentKeywords.forEach((kw, i) => {
+    const tag = document.createElement('div');
+    tag.className = 'keyword-tag';
+    tag.innerHTML = `${kw} <span class="delete-keyword" data-index="${i}">×</span>`;
+    tag.querySelector('.delete-keyword').addEventListener('click', (e) => {
+      currentKeywords.splice(parseInt(e.target.dataset.index), 1);
+      renderKeywords();
+    });
+    keywordsContainer.appendChild(tag);
+  });
+}
+
+function addKeyword() {
+  const kw = newKeyword.value.trim();
+  if (kw && !currentKeywords.includes(kw)) {
+    currentKeywords.push(kw);
+    newKeyword.value = '';
+    renderKeywords();
+  }
 }
