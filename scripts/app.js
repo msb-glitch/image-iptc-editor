@@ -72,7 +72,7 @@ async function extractIptcData(arrayBuffer) {
 }
 
 // 2. Generate New Metadata
-async function callDeepSeekAPI(imageBase64, prompt) {
+async function generateMetadata(imageBase64, prompt) {
   let apiKey = localStorage.getItem('OPENROUTER_API_KEY');
   
   if (!apiKey) {
