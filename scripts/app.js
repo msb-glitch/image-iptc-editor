@@ -62,23 +62,11 @@ async function analyzeImage() {
 
 // 3. Generate Metadata via API
 async function generateMetadata(file, existingData) {
-  let apiKey = localStorage.getItem('OPENROUTER_API_KEY');
-  if (!apiKey) {
-    apiKey = window.prompt('Enter OpenRouter API key:');
-    if (!apiKey) throw new Error('API key required');
-    localStorage.setItem('OPENROUTER_API_KEY', apiKey);
-  }
-
   const imageBase64 = await fileToBase64(file);
   
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+  const response = await fetch('/api/generate-caption', {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': window.location.href,
-      'X-Title': 'Image Captioner'
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: "deepseek/deepseek-chat:free",
       messages: [{
@@ -99,16 +87,14 @@ async function generateMetadata(file, existingData) {
   });
 
   if (!response.ok) {
-    if (response.status === 401) {
-      localStorage.removeItem('OPENROUTER_API_KEY');
-      throw new Error('Invalid API key. Please refresh and try again.');
-    }
-    throw new Error(`API error: ${response.status}`);
+    const error = await response.json();
+    throw new Error(error.error || 'API request failed');
   }
 
-  const data = await response.json();
-  return parseApiResponse(data.choices[0]?.message?.content);
+  return parseApiResponse((await response.json()).choices[0]?.message?.content);
 }
+
+// Remove all localStorage API key references
 
 // 4. Save with IPTC Metadata
 async function saveAndDownload() {
