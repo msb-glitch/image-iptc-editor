@@ -1,0 +1,28 @@
+{
+  "name": "image-captioner",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "nodemon": "^3.1.0"
+  },
+  "description": "Image keyworder",
+  "main": "server.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/msb-glitch/image-iptc-editor.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/msb-glitch/image-iptc-editor/issues"
+  },
+  "homepage": "https://github.com/msb-glitch/image-iptc-editor#readme"
+}
